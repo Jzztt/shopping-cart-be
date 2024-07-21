@@ -5,16 +5,19 @@ import User from "../models/User.js";
 class OrderController {
   async createOrder(req, res) {
     try {
-      const { userId, products } = req.body;
+      const { userId, productId } = req.body;
 
       const userObjectId = new mongoose.Types.ObjectId(userId);
 
       let user = await User.findById(userObjectId);
       if (!user) {
-        return res.status(404).json({ message: 'User not found' });
+        return res.status(404).json({ message: "User not found" });
       }
 
-      let order = await Order.findOne({ user: userObjectId });
+      let order = await Order.findOne({ user: userObjectId }).populate(
+        "products.product"
+      );
+      const products = await Product.find({ _id: { $in: productId } });
 
       if (!order) {
         order = new Order({
@@ -29,31 +32,35 @@ class OrderController {
       }
 
       let total = order.total;
-      const newProducts = order.products;
+      const newProducts = order.products.map((p) => ({
+        product: p.product._id.toString(),
+        quantity: p.quantity,
+      }));
 
       for (const item of products) {
         const product = await Product.findById(item._id);
         if (!product) {
-          return res.status(404).json({ message: `Product with ID ${item._id} not found` });
+          return res
+            .status(404)
+            .json({ message: `Product with ID ${item._id} not found` });
         }
 
         if (isNaN(product.price) || product.price <= 0) {
-          return res.status(400).json({ message: `Invalid price for product with ID ${item._id}` });
+          return res
+            .status(400)
+            .json({ message: `Invalid price for product with ID ${item._id}` });
         }
 
-        const existingProduct = newProducts.find(p => p._id.toString() === item._id.toString());
+        const existingProduct = newProducts.find(
+          (p) => p.product.toString() === item._id.toString()
+        );
 
         if (existingProduct) {
           existingProduct.quantity += item.quantity || 1;
           total += product.price * (item.quantity || 1);
         } else {
           newProducts.push({
-            _id: item._id,
-            name: item.name,
-            description: item.description,
-            cost: item.cost,
-            price: product.price,
-            image: item.image,
+            product: item._id,
             quantity: item.quantity || 1,
           });
           total += product.price * (item.quantity || 1);
@@ -64,9 +71,10 @@ class OrderController {
       order.total = total;
 
       const updatedOrder = await order.save();
+      const orders = await Order.find().populate("products.product");
 
       res.status(200).json({
-        data: updatedOrder,
+        data: orders,
         success: true,
         message: "Order created successfully",
       });
@@ -77,7 +85,7 @@ class OrderController {
 
   async getAllOrders(req, res) {
     try {
-      const orders = await Order.find();
+      const orders = await Order.find().populate("products.product");
       res.status(200).json({
         data: orders,
         success: true,
@@ -116,11 +124,11 @@ class OrderController {
 
   async decreaseOrderQuantity(req, res) {
     try {
-      const order = await Order.findById(req.params.id);
+      const order = await Order.findById(req.params.id).populate("products.product");
       if (!order) return res.status(404).json({ message: "Order not found" });
 
       const productIndex = order.products.findIndex(
-        (p) => p._id.toString() === req.params.productId
+        (p) => p.product._id.toString() === req.params.productId
       );
 
       if (productIndex === -1) {
@@ -129,20 +137,23 @@ class OrderController {
           .json({ message: "Product not found in order", success: false });
       }
 
+
       if (order.products[productIndex].quantity > 1) {
         order.products[productIndex].quantity -= 1;
       } else {
         order.products.splice(productIndex, 1);
       }
 
-      order.total = order.products.reduce((acc, product) => {
-        return acc + product.price * product.quantity;
+      order.total = order.products.reduce((acc, item) => {
+        return acc + item.product.price * item.quantity;
       }, 0);
 
       const updatedOrder = await order.save();
+      const orders = await Order.find().populate("products.product");
+
 
       res.json({
-        data: updatedOrder,
+        data: orders,
         success: true,
         message: "Product quantity updated successfully",
       });
@@ -153,11 +164,11 @@ class OrderController {
 
   async deleteProductFromOrder(req, res) {
     try {
-      const order = await Order.findById(req.params.id);
+      const order = await Order.findById(req.params.id).populate("products.product");
       if (!order) return res.status(404).json({ message: "Order not found" });
 
       const productIndex = order.products.findIndex(
-        (p) => p._id.toString() === req.params.productId
+        (p) => p.product._id.toString() === req.params.productId
       );
 
       if (productIndex === -1) {
@@ -168,21 +179,20 @@ class OrderController {
 
       order.products.splice(productIndex, 1);
 
-      order.total = order.products.reduce((acc, product) => {
-        return acc + product.price * product.quantity;
+      order.total = order.products.reduce((acc, item) => {
+        return acc + item.product.price * item.quantity;
       }, 0);
 
       const updatedOrder = await order.save();
+      const orders = await Order.find().populate("products.product");
 
       res.json({
-        data: updatedOrder,
+        data: orders,
         success: true,
         message: "Product deleted from order successfully",
       });
-
     } catch (error) {
       res.status(400).json({ message: error.message });
-
     }
   }
 }
